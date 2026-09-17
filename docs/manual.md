@@ -75,6 +75,30 @@ Click **Image** to import a picture from your device. Images can be scaled, crop
 
 ![Image added](screenshots/02-adding-elements/06-image-element-added.png)
 
+### Icons
+
+Click **Icon** to open the Icon Picker. Type a keyword (e.g. `car`, `home`, `warning`, `wifi`, `printer`) to search, or pick a library from the dropdown with an empty search box to browse its entire icon set. Click a result to drop it onto the label.
+
+![Icon picker opened](screenshots/07-icons/01-picker-opened.png)
+
+![Icon search results](screenshots/07-icons/02-search-results.png)
+
+**Choosing a library:** the dropdown next to the search box is a searchable picker - **All libraries** (searches everything at once) at the top, a curated **Recommended** shortlist below it (Material Symbols, Material Design Icons, Tabler Icons, Lucide, Phosphor, Font Awesome 6, Bootstrap Icons, Heroicons, Remix Icon, Carbon, Fluent UI, Solar), then every other library in the [Iconify](https://iconify.design) ecosystem (200+ of them) further down. Type in that picker's own search box (e.g. `font`) to filter the full list by name. The Recommended shortlist deliberately sticks to monochrome icon sets, since the print target is a 1-bit thermal printer; colorful sets (emoji, logos, flags, ...) are still reachable through the full list, just not front-and-center.
+
+**Browsing a library:** select a specific library with the search box empty to see its whole icon set. If that library has categories (most do, e.g. MDI's "Transport", "Animal", "Weather", ...), a second dropdown lets you narrow to one. With "All libraries" selected and an empty search box, you instead see your recently-used and favorited icons.
+
+**Pagination:** results (from either a search or a library browse) load 100 at a time, with a **Load more** button and a "Showing X of Y results" line underneath rather than rendering everything at once.
+
+**Internet requirement:** browsing, searching for, and inserting an icon needs an internet connection (it queries the public Iconify API). Once an icon is placed on your label, it no longer needs the network - see below.
+
+**How icons are stored:** an icon is added as a self-contained, sanitized SVG (converted to a data URI) embedded directly in the image element - not a live reference like `mdi:car`. This means:
+
+- Saved/exported designs keep working forever, even if Iconify is ever unreachable or the icon is renamed upstream.
+- Opening a saved project never re-fetches icons from the network.
+- Icons behave exactly like an imported image: move, scale (with aspect ratio lock), rotate, duplicate, delete, undo/redo, and print all work the same way.
+
+Because icons are flat vector artwork, the Dithering/Brightness/Contrast controls used for photos are hidden for icon elements - they render as crisp black shapes on the printed label. Use **Change...** in the properties panel to swap an icon's artwork without recreating the element.
+
 ### Multiple Elements
 
 You can add as many elements as you need. Use the layer buttons (Raise/Lower) to control which elements appear on top.
@@ -227,6 +251,8 @@ Fill in the fields:
 - **Width (bytes)** - Print head width (each byte = 8 pixels = ~1mm at 203 DPI)
 - **DPI** - 203 (standard) or 300 (high-res)
 - **Alignment** - How the label is positioned on the print head
+- **Horizontal Offset (px)** - Print calibration: shifts the final raster right (+) or left (-) by whole pixels (~8 px = 1 mm at 203 DPI) to correct a printer that's physically misaligned. Does not change print width, DPI, or the canvas - it's applied after alignment, directly to the printer output.
+- **Vertical Offset (px)** - Print calibration: shifts the final raster down (+) or up (-) by whole pixels/lines (~8 px = 1 mm at 203 DPI) to correct content that starts printing too early or too late in the feed direction. Same rules as Horizontal Offset - applied directly to the printer output, doesn't change label height or the canvas.
 - **Auto-detect Patterns** - BLE device name prefixes for automatic recognition
 
 ![Filled form](screenshots/06-custom-printers/03-new-printer-filled.png)

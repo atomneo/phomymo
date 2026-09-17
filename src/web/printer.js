@@ -478,6 +478,65 @@ export function getPrinterAlignment(deviceName, modelOverride = 'auto') {
   return 'center';
 }
 
+// Reasonable calibration range for horizontal print offset, in pixels.
+// At 203 DPI, ~8px ≈ 1mm, so ±64px covers ±8mm of physical drift.
+const HORIZONTAL_OFFSET_LIMIT = 64;
+
+/**
+ * Normalize a horizontal offset value: coerce to a finite integer and clamp
+ * to the supported calibration range. Missing/invalid values become 0, which
+ * matches the "no correction" default and keeps old profiles (with no
+ * horizontalOffset field) behaving exactly as before.
+ * @param {*} value
+ * @returns {number}
+ */
+export function normalizeHorizontalOffset(value) {
+  const n = Math.trunc(Number(value));
+  if (!Number.isFinite(n)) return 0;
+  return Math.max(-HORIZONTAL_OFFSET_LIMIT, Math.min(HORIZONTAL_OFFSET_LIMIT, n));
+}
+
+/**
+ * Get the calibration horizontal offset (in pixels) for a printer profile.
+ * Positive = shift print content right, negative = shift left, 0 = no correction.
+ * Missing field (old saved profiles) or no matched definition -> 0.
+ */
+export function getPrinterHorizontalOffset(deviceName, modelOverride = 'auto') {
+  const config = _resolveConfig(deviceName, modelOverride);
+  const def = config.definition;
+  return normalizeHorizontalOffset(def?.horizontalOffset);
+}
+
+// Reasonable calibration range for vertical print offset, in pixels/lines.
+// At 203 DPI, ~8px ≈ 1mm, so ±64px covers ±8mm of physical drift.
+const VERTICAL_OFFSET_LIMIT = 64;
+
+/**
+ * Normalize a vertical offset value: coerce to a finite integer and clamp
+ * to the supported calibration range. Missing/invalid values become 0, which
+ * matches the "no correction" default and keeps old profiles (with no
+ * verticalOffset field) behaving exactly as before.
+ * @param {*} value
+ * @returns {number}
+ */
+export function normalizeVerticalOffset(value) {
+  const n = Math.trunc(Number(value));
+  if (!Number.isFinite(n)) return 0;
+  return Math.max(-VERTICAL_OFFSET_LIMIT, Math.min(VERTICAL_OFFSET_LIMIT, n));
+}
+
+/**
+ * Get the calibration vertical offset (in pixels/lines) for a printer profile.
+ * Positive = shift print content down (later in the feed direction),
+ * negative = shift up (earlier), 0 = no correction.
+ * Missing field (old saved profiles) or no matched definition -> 0.
+ */
+export function getPrinterVerticalOffset(deviceName, modelOverride = 'auto') {
+  const config = _resolveConfig(deviceName, modelOverride);
+  const def = config.definition;
+  return normalizeVerticalOffset(def?.verticalOffset);
+}
+
 export function getPrinterWidthBytes(deviceName, modelOverride = 'auto') {
   const overrideConfig = getOverrideConfig(modelOverride);
   if (overrideConfig && overrideConfig.width !== null) return overrideConfig.width;
@@ -600,6 +659,102 @@ function rotateRaster90CCW(data, widthBytes, heightLines) {
 }
 
 /**
+ * Shift raster data horizontally within its existing bounds (print-head calibration).
+ * This is a pure translation of pixel content: the output has the exact same
+ * widthBytes/heightLines/byte length as the input. Content pushed past an edge
+ * is clipped; the vacated space is filled with blank (white/0) pixels.
+ *
+ * Positive offset = shift content right, negative = shift content left.
+ * Applied after alignment (and, for rotated printers, after rotation) so it
+ * operates directly in print-head pixel space.
+ *
+ * @param {Uint8Array} data - Raster data (1 bit per pixel, packed MSB-first)
+ * @param {number} widthBytes - Width in bytes (8 pixels per byte)
+ * @param {number} heightLines - Height in lines/rows
+ * @param {number} offsetPx - Horizontal offset in pixels (already normalized/clamped)
+ * @returns {Uint8Array} Shifted raster data, same length as input
+ */
+export function shiftRasterHorizontal(data, widthBytes, heightLines, offsetPx) {
+  const offset = Math.trunc(offsetPx) || 0;
+  if (offset === 0 || widthBytes <= 0) return data;
+
+  const widthPx = widthBytes * 8;
+
+  // Offset large enough to push everything off-canvas -> blank raster, same size.
+  if (Math.abs(offset) >= widthPx) {
+    return new Uint8Array(data.length);
+  }
+
+  // Defensive: never read/write past the buffer even if heightLines doesn't
+  // exactly match data.length (shouldn't happen, but keeps this robust).
+  const rows = Math.min(heightLines, Math.floor(data.length / widthBytes));
+  const output = new Uint8Array(data.length);
+
+  for (let y = 0; y < rows; y++) {
+    const rowBase = y * widthBytes;
+    for (let dstX = 0; dstX < widthPx; dstX++) {
+      const srcX = dstX - offset;
+      if (srcX < 0 || srcX >= widthPx) continue; // stays blank (0)
+
+      const srcByteIdx = rowBase + Math.floor(srcX / 8);
+      const srcBitIdx = 7 - (srcX % 8);
+      const pixel = (data[srcByteIdx] >> srcBitIdx) & 1;
+      if (!pixel) continue;
+
+      const dstByteIdx = rowBase + Math.floor(dstX / 8);
+      const dstBitIdx = 7 - (dstX % 8);
+      output[dstByteIdx] |= (1 << dstBitIdx);
+    }
+  }
+
+  return output;
+}
+
+/**
+ * Shift raster data vertically within its existing bounds (print-head calibration).
+ * This is a pure translation of whole rows: the output has the exact same
+ * widthBytes/heightLines/byte length as the input. Rows pushed past an edge
+ * are clipped; the vacated rows are filled with blank (white/0) pixels.
+ *
+ * Positive offset = shift content down (later in the feed direction),
+ * negative offset = shift content up (earlier).
+ * Applied after alignment (and, for rotated printers, after rotation) so it
+ * operates directly in print-head row space, same as shiftRasterHorizontal.
+ *
+ * @param {Uint8Array} data - Raster data (1 bit per pixel, packed MSB-first)
+ * @param {number} widthBytes - Width in bytes (8 pixels per byte)
+ * @param {number} heightLines - Height in lines/rows
+ * @param {number} offsetRows - Vertical offset in rows/pixels (already normalized/clamped)
+ * @returns {Uint8Array} Shifted raster data, same length as input
+ */
+export function shiftRasterVertical(data, widthBytes, heightLines, offsetRows) {
+  const offset = Math.trunc(offsetRows) || 0;
+  if (offset === 0 || widthBytes <= 0 || heightLines <= 0) return data;
+
+  // Defensive: never read/write past the buffer even if heightLines doesn't
+  // exactly match data.length (shouldn't happen, but keeps this robust).
+  const rows = Math.min(heightLines, Math.floor(data.length / widthBytes));
+
+  // Offset large enough to push every row off-canvas -> blank raster, same size.
+  if (Math.abs(offset) >= rows) {
+    return new Uint8Array(data.length);
+  }
+
+  const output = new Uint8Array(data.length);
+
+  for (let dstY = 0; dstY < rows; dstY++) {
+    const srcY = dstY - offset;
+    if (srcY < 0 || srcY >= rows) continue; // stays blank (0)
+
+    const srcBase = srcY * widthBytes;
+    const dstBase = dstY * widthBytes;
+    output.set(data.subarray(srcBase, srcBase + widthBytes), dstBase);
+  }
+
+  return output;
+}
+
+/**
  * Print raster data to a Phomemo printer
  *
  * @param {Object} transport - BLE or USB transport instance
@@ -614,7 +769,7 @@ function rotateRaster90CCW(data, widthBytes, heightLines) {
  */
 export async function print(transport, rasterData, options = {}) {
   const { isBLE = false, deviceName = '', printerModel = 'auto', density = 6, feed = 32, continuous = false, onProgress = null } = options;
-  const { data, widthBytes, heightLines } = rasterData;
+  const { widthBytes, heightLines } = rasterData;
 
   const isDSeries = isDSeriesPrinter(deviceName, printerModel);
   const isP12 = isP12Printer(deviceName, printerModel);
@@ -623,9 +778,27 @@ export async function print(transport, rasterData, options = {}) {
   const isM110 = isM110Printer(deviceName, printerModel);
   const isTSPL = isTSPLPrinter(deviceName, printerModel);
   const printerDesc = getPrinterDescription(deviceName, printerModel);
-  console.log(`Printing: ${widthBytes}x${heightLines} (${data.length} bytes)`);
+  const horizontalOffset = getPrinterHorizontalOffset(deviceName, printerModel);
+  const verticalOffset = getPrinterVerticalOffset(deviceName, printerModel);
+  console.log(`Printing: ${widthBytes}x${heightLines} (${rasterData.data.length} bytes)`);
   console.log(`Device: ${deviceName}, Model: ${printerModel}, Detected: ${printerDesc}`);
   console.log(`Transport: ${isBLE ? 'BLE' : 'USB'}, Density: ${density}, Feed: ${feed}`);
+  if (horizontalOffset !== 0) {
+    console.log(`Horizontal offset calibration: ${horizontalOffset > 0 ? '+' : ''}${horizontalOffset}px`);
+  }
+  if (verticalOffset !== 0) {
+    console.log(`Vertical offset calibration: ${verticalOffset > 0 ? '+' : ''}${verticalOffset}px`);
+  }
+
+  // Rotated printers (D-series, P12) apply the offset themselves after rotation,
+  // since only then does the raster's X/Y axes correspond to the print head.
+  // Everyone else gets the offset applied directly here, right before dispatch -
+  // this is the latest common point after alignment and before protocol framing.
+  let data = rasterData.data;
+  if (!isDSeries && !isP12) {
+    data = shiftRasterHorizontal(data, widthBytes, heightLines, horizontalOffset);
+    data = shiftRasterVertical(data, widthBytes, heightLines, verticalOffset);
+  }
 
   if (isTSPL) {
     // TSPL protocol for shipping label printers (PM-241, etc.)
@@ -635,10 +808,10 @@ export async function print(transport, rasterData, options = {}) {
     await printTSPL(transport, data, widthBytes, heightLines, labelWidthMm, labelHeightMm, density, onProgress);
   } else if (isP12 && isBLE) {
     // P12 uses its own protocol with proprietary init sequence
-    await printP12(transport, data, widthBytes, heightLines, onProgress);
+    await printP12(transport, data, widthBytes, heightLines, onProgress, horizontalOffset, verticalOffset);
   } else if (isDSeries && isBLE) {
     // D-series (D30, D110, etc.)
-    await printDSeries(transport, data, widthBytes, heightLines, onProgress, density, continuous, feed);
+    await printDSeries(transport, data, widthBytes, heightLines, onProgress, density, continuous, feed, horizontalOffset, verticalOffset);
   } else if (isM02 && isBLE) {
     await printM02(transport, data, widthBytes, heightLines, density, onProgress);
   } else if (isM04 && isBLE) {
@@ -657,13 +830,22 @@ export async function print(transport, rasterData, options = {}) {
  * Print via BLE for D-series printers (D30, D110, etc.)
  * Uses rotated printing with D-series protocol
  */
-async function printDSeries(transport, data, widthBytes, heightLines, onProgress, density = 6, continuous = false, feed = 0) {
+async function printDSeries(transport, data, widthBytes, heightLines, onProgress, density = 6, continuous = false, feed = 0, horizontalOffset = 0, verticalOffset = 0) {
   console.log('Using D-series protocol...');
   console.log(`Input: ${widthBytes} bytes wide x ${heightLines} rows (${data.length} bytes)`);
 
   // Rotate for D-series (they print labels sideways)
   const rotated = rotateRaster90CW(data, widthBytes, heightLines);
   console.log(`Rotated: ${rotated.widthBytes} bytes wide x ${rotated.heightLines} rows`);
+
+  // Apply calibration offsets after rotation, since only now do the raster's
+  // X/Y axes correspond to the physical print head.
+  if (horizontalOffset !== 0) {
+    rotated.data = shiftRasterHorizontal(rotated.data, rotated.widthBytes, rotated.heightLines, horizontalOffset);
+  }
+  if (verticalOffset !== 0) {
+    rotated.data = shiftRasterVertical(rotated.data, rotated.widthBytes, rotated.heightLines, verticalOffset);
+  }
 
   // For continuous tape, pad raster with blank rows to push content past the cutter
   // ESC J feed is ignored in continuous mode, so we bake the feed into the image data
@@ -726,13 +908,22 @@ async function printDSeries(transport, data, widthBytes, heightLines, onProgress
  * Print via BLE for P12-series printers (P12, P12 Pro)
  * Continuous tape printer - uses proprietary init sequence to fix print positioning
  */
-async function printP12(transport, data, widthBytes, heightLines, onProgress) {
+async function printP12(transport, data, widthBytes, heightLines, onProgress, horizontalOffset = 0, verticalOffset = 0) {
   console.log('Using P12-series protocol...');
   console.log(`Input: ${widthBytes} bytes wide x ${heightLines} rows (${data.length} bytes)`);
 
   // Rotate for P12 (prints labels sideways like D30)
   const rotated = rotateRaster90CW(data, widthBytes, heightLines);
   console.log(`Rotated: ${rotated.widthBytes} bytes wide x ${rotated.heightLines} rows`);
+
+  // Apply calibration offsets after rotation, since only now do the raster's
+  // X/Y axes correspond to the physical print head.
+  if (horizontalOffset !== 0) {
+    rotated.data = shiftRasterHorizontal(rotated.data, rotated.widthBytes, rotated.heightLines, horizontalOffset);
+  }
+  if (verticalOffset !== 0) {
+    rotated.data = shiftRasterVertical(rotated.data, rotated.widthBytes, rotated.heightLines, verticalOffset);
+  }
 
   // Send P12 init sequence with response waiting (as per soburi protocol)
   console.log('Sending P12 init sequence...');

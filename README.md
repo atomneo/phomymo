@@ -27,7 +27,7 @@ python3 -m http.server 8080
 
 ## Features
 
-**Design Elements** - Text (multiple fonts including local system fonts, sizes, styles, alignment, background colors), images with scale/aspect lock, barcodes (Code128, EAN-13, UPC-A, Code39), QR codes, and shapes (rectangle, ellipse, triangle, line) with solid, dithered grayscale, and stroke fills.
+**Design Elements** - Text (multiple fonts including local system fonts, sizes, styles, alignment, background colors), images with scale/aspect lock, icons (searchable Material Symbols / Material Design Icons / Tabler Icons via Iconify, stored as vector SVG), barcodes (Code128, EAN-13, UPC-A, Code39), QR codes, and shapes (rectangle, ellipse, triangle, line) with solid, dithered grayscale, and stroke fills.
 
 **Editing** - Drag to move, corner/edge resize handles, rotation. Multi-select (Shift+click), grouping (Ctrl/Cmd+G), undo/redo, keyboard nudge, layer ordering, clipboard image paste (Ctrl/Cmd+V).
 
@@ -80,6 +80,18 @@ Custom definitions are saved in your browser's localStorage and take priority ov
 
 Built-in definitions are loaded from `printers.json` at startup.
 
+## Icon Picker
+
+Click **Icon** in the toolbar to browse or search vector icons from the whole [Iconify](https://iconify.design) ecosystem (200+ open icon libraries) and insert one at a sensible default size. From there it behaves like any other element - drag, resize with aspect-ratio lock, rotate, duplicate, delete, undo/redo, and print.
+
+**Choosing a library** - the dropdown next to the search box opens a searchable picker: **All libraries** at the top, a curated **Recommended** shortlist (Material Symbols, Material Design Icons, Tabler Icons, Lucide, Phosphor, Font Awesome 6, Bootstrap Icons, Heroicons, Remix Icon, Carbon, Fluent UI, Solar - all monochrome sets, well-suited to 1-bit thermal printing), and every other Iconify library below that, searchable by typing (e.g. `font` finds Font Awesome, Fontisto, ...). The full list is fetched live from Iconify's `/collections` endpoint, not hardcoded.
+
+**Browsing a library** - selecting a specific library with an empty search shows that library's entire icon set (via `/collection`), with a **category** dropdown when the library has one (e.g. MDI's "Transport", "Animal", ...). Selecting "All libraries" with an empty search shows your recently-used and favorited icons instead.
+
+**Searching** - typing a query searches either the selected library only, or all of Iconify at once when "All libraries" is selected. Results load 100 at a time with a **Load more** button underneath ("Showing X of Y results") rather than dumping hundreds of icons into the page at once.
+
+**Requires internet** only while browsing/searching/inserting (it queries the public Iconify API). Once placed, an icon is stored in the project as a self-contained, sanitized SVG data URI - not a live `mdi:car`-style reference - so saved/exported designs and reprints never need the network again. Because icons are flat vector art, the image dithering/brightness/contrast controls are hidden for them; they print as crisp black shapes. Use **Change...** in the properties panel to swap an icon's artwork without recreating the element.
+
 ## Keyboard Shortcuts
 
 | Shortcut | Action |
@@ -112,6 +124,8 @@ phomymo/
 │       ├── handles.js     # Selection handles
 │       ├── storage.js     # localStorage persistence
 │       ├── templates.js   # Variable substitution & CSV
+│       ├── icons.js       # Iconify search/fetch + SVG sanitization
+│       ├── icon-picker.js # Icon Picker modal UI
 │       ├── ble.js         # Web Bluetooth transport
 │       ├── usb.js         # WebUSB transport
 │       ├── printer.js     # Print protocols

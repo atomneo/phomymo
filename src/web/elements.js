@@ -62,6 +62,32 @@ export function createImageElement(imageData, options = {}) {
 }
 
 /**
+ * Create an icon element (a vector icon inserted via the Icon Picker).
+ *
+ * This is intentionally a thin wrapper around createImageElement() - an
+ * icon behaves as a normal image element in every way (move, scale, rotate,
+ * dither preview, print, serialize) so it reuses that entire pipeline. The
+ * only addition is the `icon` metadata tag, which the UI uses to show the
+ * icon's source name and to hide raster-photo-only controls (dithering,
+ * brightness, contrast) that don't make sense for flat vector icons.
+ *
+ * `imageData` must already be a self-contained SVG data URI (produced by
+ * icons.js) so the icon renders and reprints without any network access.
+ *
+ * @param {string} imageData - Self-contained SVG data URI
+ * @param {{ prefix: string, name: string }} iconRef - Iconify collection + icon name
+ * @param {object} options - Same options as createImageElement
+ */
+export function createIconElement(imageData, iconRef, options = {}) {
+  const element = createImageElement(imageData, {
+    ...options,
+    lockAspectRatio: options.lockAspectRatio ?? true,
+  });
+  element.icon = { prefix: iconRef.prefix, name: iconRef.name };
+  return element;
+}
+
+/**
  * Create a barcode element
  */
 export function createBarcodeElement(data = '123456789012', options = {}) {
