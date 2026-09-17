@@ -107,6 +107,84 @@
     .toolbar-divider {
       @apply w-px h-5 sm:h-6 bg-gray-200 mx-1 sm:mx-2 flex-shrink-0;
     }
+    /* Icon picker grid */
+    .icon-picker-item {
+      position: relative;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      aspect-ratio: 1;
+      border: 1px solid #e5e7eb;
+      border-radius: 0.5rem;
+      background: white;
+      cursor: pointer;
+      transition: all 0.1s ease;
+    }
+    .icon-picker-item:hover {
+      background-color: #f3f4f6;
+      border-color: #93c5fd;
+    }
+    .icon-picker-item img {
+      width: 28px;
+      height: 28px;
+      pointer-events: none;
+    }
+    .icon-picker-fav {
+      position: absolute;
+      top: 1px;
+      right: 3px;
+      font-size: 11px;
+      color: #d1d5db;
+      cursor: pointer;
+      line-height: 1;
+    }
+    .icon-picker-fav.active {
+      color: #f59e0b;
+    }
+    .icon-picker-fav:hover {
+      color: #f59e0b;
+    }
+    /* Icon picker library panel */
+    .icon-picker-lib-section {
+      padding: 6px 12px 4px;
+      font-size: 10px;
+      font-weight: 600;
+      letter-spacing: 0.03em;
+      text-transform: uppercase;
+      color: #9ca3af;
+    }
+    .icon-picker-lib-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      width: 100%;
+      padding: 6px 12px;
+      font-size: 13px;
+      text-align: left;
+      color: #374151;
+      background: white;
+      border: none;
+      cursor: pointer;
+    }
+    .icon-picker-lib-row:hover {
+      background-color: #f3f4f6;
+    }
+    .icon-picker-lib-row.active {
+      background-color: #eff6ff;
+      color: #2563eb;
+      font-weight: 500;
+    }
+    .icon-picker-lib-name {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .icon-picker-lib-meta {
+      flex-shrink: 0;
+      font-size: 10px;
+      color: #9ca3af;
+    }
     /* Hide toolbar button text on small screens */
     @media (max-width: 640px) {
       .toolbar-btn-text { display: none; }
@@ -462,6 +540,10 @@
       <button id="add-image" class="toolbar-btn" title="Add Image">
         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
         <span class="hidden sm:inline">Image</span>
+      </button>
+      <button id="add-icon" class="toolbar-btn" title="Add Icon">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.99-2.386l-.548-.547z"/></svg>
+        <span class="hidden sm:inline">Icon</span>
       </button>
       <button id="add-barcode" class="toolbar-btn" title="Add Barcode">
         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v1m6 11h2m-6 0h-2v4m0-11v3m0 0h.01M12 12h4.01M16 20h2M4 12h2m10 0h2M4 8h2m10 0h2m2-4H6a2 2 0 00-2 2v12a2 2 0 002 2h12a2 2 0 002-2V6a2 2 0 00-2-2z"/></svg>
@@ -953,6 +1035,11 @@
 
         <!-- Image Properties -->
         <div id="props-image" class="hidden space-y-2">
+          <!-- Icon-only info block (hidden for regular raster/PDF images) -->
+          <div id="props-icon-info" class="hidden p-2 bg-gray-50 rounded-lg flex items-center justify-between gap-2">
+            <span id="prop-icon-name" class="text-[11px] text-gray-500 truncate">mdi:car</span>
+            <button id="prop-change-icon" class="px-2 py-1 text-[10px] border border-gray-200 rounded hover:bg-gray-50 whitespace-nowrap bg-white">Change…</button>
+          </div>
           <div>
             <label class="text-[10px] text-gray-400 uppercase tracking-wide">Scale</label>
             <div class="flex items-center gap-1.5">
@@ -971,27 +1058,31 @@
               <button id="prop-replace-image" class="px-2 py-1 text-[10px] border border-gray-200 rounded hover:bg-gray-50">Replace</button>
             </div>
           </div>
-          <div>
-            <label class="text-[10px] text-gray-400 uppercase tracking-wide">Dithering</label>
-            <select id="prop-image-dither" class="w-full px-1.5 py-1 text-xs border border-gray-200 rounded focus:outline-none focus:ring-1 focus:ring-blue-400">
-              <option value="none">None (Threshold)</option>
-              <option value="ordered">Ordered (Bayer)</option>
-              <option value="atkinson">Atkinson</option>
-              <option value="floyd-steinberg" selected>Floyd-Steinberg</option>
-            </select>
-          </div>
-          <div>
-            <label class="text-[10px] text-gray-400 uppercase tracking-wide">Brightness</label>
-            <div class="flex items-center gap-1.5">
-              <input type="range" id="prop-image-brightness" min="-100" max="100" value="0" class="flex-1">
-              <input type="number" id="prop-image-brightness-input" min="-100" max="100" value="0" class="w-12 px-1.5 py-1 text-xs border border-gray-200 rounded text-center">
+          <!-- Raster-only controls (hidden for vector icons - dithering here would
+               override the global print dither mode; see getDitherMode() in app.js) -->
+          <div id="props-image-raster" class="space-y-2">
+            <div>
+              <label class="text-[10px] text-gray-400 uppercase tracking-wide">Dithering</label>
+              <select id="prop-image-dither" class="w-full px-1.5 py-1 text-xs border border-gray-200 rounded focus:outline-none focus:ring-1 focus:ring-blue-400">
+                <option value="none">None (Threshold)</option>
+                <option value="ordered">Ordered (Bayer)</option>
+                <option value="atkinson">Atkinson</option>
+                <option value="floyd-steinberg" selected>Floyd-Steinberg</option>
+              </select>
             </div>
-          </div>
-          <div>
-            <label class="text-[10px] text-gray-400 uppercase tracking-wide">Contrast</label>
-            <div class="flex items-center gap-1.5">
-              <input type="range" id="prop-image-contrast" min="-100" max="100" value="0" class="flex-1">
-              <input type="number" id="prop-image-contrast-input" min="-100" max="100" value="0" class="w-12 px-1.5 py-1 text-xs border border-gray-200 rounded text-center">
+            <div>
+              <label class="text-[10px] text-gray-400 uppercase tracking-wide">Brightness</label>
+              <div class="flex items-center gap-1.5">
+                <input type="range" id="prop-image-brightness" min="-100" max="100" value="0" class="flex-1">
+                <input type="number" id="prop-image-brightness-input" min="-100" max="100" value="0" class="w-12 px-1.5 py-1 text-xs border border-gray-200 rounded text-center">
+              </div>
+            </div>
+            <div>
+              <label class="text-[10px] text-gray-400 uppercase tracking-wide">Contrast</label>
+              <div class="flex items-center gap-1.5">
+                <input type="range" id="prop-image-contrast" min="-100" max="100" value="0" class="flex-1">
+                <input type="number" id="prop-image-contrast-input" min="-100" max="100" value="0" class="w-12 px-1.5 py-1 text-xs border border-gray-200 rounded text-center">
+              </div>
             </div>
           </div>
           <input type="file" id="prop-image-input" accept="image/*,.pdf" class="hidden">
@@ -1815,6 +1906,65 @@
     </div>
   </div>
 
+  <!-- Icon Picker Modal -->
+  <div id="icon-picker-modal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+    <div class="bg-white rounded-xl shadow-xl w-full max-w-lg flex flex-col" style="max-height: 85vh;">
+      <div class="flex justify-between items-center p-4 border-b border-gray-100">
+        <h2 class="text-lg font-semibold">Add Icon</h2>
+        <button id="icon-picker-close" class="text-gray-400 hover:text-gray-600 text-2xl leading-none">&times;</button>
+      </div>
+
+      <div class="p-4 border-b border-gray-100 space-y-2">
+        <div class="flex gap-2">
+          <input type="text" id="icon-picker-search" placeholder="Search icons (e.g. car, home, warning)…"
+            class="flex-1 px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-400">
+          <div class="relative">
+            <button type="button" id="icon-picker-library-btn"
+              class="px-3 py-2 text-sm border border-gray-200 rounded-lg bg-white hover:bg-gray-50 flex items-center gap-1.5 whitespace-nowrap max-w-[150px]">
+              <span id="icon-picker-library-label" class="truncate">All libraries</span>
+              <svg class="w-3 h-3 text-gray-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+            </button>
+            <div id="icon-picker-library-panel" class="hidden absolute right-0 top-full mt-1 w-72 bg-white border border-gray-200 rounded-lg shadow-xl z-[70] flex flex-col overflow-hidden" style="max-height: 380px;">
+              <div class="p-2 border-b border-gray-100 flex-shrink-0">
+                <input type="text" id="icon-picker-library-search" placeholder="Search libraries (e.g. font, material)…"
+                  class="w-full px-2 py-1.5 text-xs border border-gray-200 rounded focus:outline-none focus:ring-1 focus:ring-blue-400">
+              </div>
+              <div id="icon-picker-library-list" class="flex-1 overflow-y-auto py-1"></div>
+            </div>
+          </div>
+        </div>
+        <select id="icon-picker-category" class="hidden w-full px-2 py-1.5 text-xs border border-gray-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-400">
+          <option value="">All categories</option>
+        </select>
+      </div>
+
+      <div class="flex-1 overflow-y-auto p-4" style="min-height: 260px;">
+        <div id="icon-picker-idle" class="text-center text-sm text-gray-400 py-12">
+          Type to search, or pick a library above.
+        </div>
+        <div id="icon-picker-loading" class="hidden text-center text-sm text-gray-400 py-12">
+          Loading icons…
+        </div>
+        <div id="icon-picker-empty" class="hidden text-center text-sm text-gray-400 py-12">
+          No icons found. Try a different search term.
+        </div>
+        <div id="icon-picker-error" class="hidden text-center text-sm py-12">
+          <p class="text-red-500 mb-3">Couldn't load icons. Check your internet connection.</p>
+          <button id="icon-picker-retry" class="px-3 py-1.5 text-xs border border-gray-200 rounded-lg hover:bg-gray-50">Retry</button>
+        </div>
+        <div id="icon-picker-grid" class="hidden grid grid-cols-5 sm:grid-cols-6 gap-2"></div>
+        <div id="icon-picker-loadmore-wrap" class="hidden text-center pt-4">
+          <div id="icon-picker-count" class="text-[11px] text-gray-400 mb-2"></div>
+          <button id="icon-picker-loadmore" class="px-3 py-1.5 text-xs border border-gray-200 rounded-lg hover:bg-gray-50">Load more</button>
+        </div>
+      </div>
+
+      <div class="p-3 border-t border-gray-100 text-[11px] text-gray-400 text-center">
+        Icons via <a href="https://iconify.design" target="_blank" rel="noopener" class="underline hover:text-gray-600">Iconify</a> · saved into your design as vector SVG
+      </div>
+    </div>
+  </div>
+
   <!-- Print Progress Modal -->
   <div id="print-progress-modal" class="fixed inset-0 bg-black/50 hidden items-center justify-center z-50">
     <div class="bg-white rounded-xl shadow-xl p-6 w-80">
@@ -2084,6 +2234,12 @@
         </svg>
         <span>Image</span>
       </button>
+      <button id="mobile-add-icon" class="mobile-tool-btn">
+        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.99-2.386l-.548-.547z"/>
+        </svg>
+        <span>Icon</span>
+      </button>
       <div class="mobile-divider"></div>
       <button id="mobile-add-rect" class="mobile-tool-btn">
         <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -2143,7 +2299,7 @@
     pdfjsModule.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.0.379/pdf.worker.min.mjs';
     window.pdfjsLib = pdfjsModule;
   </script>
-  <script type="module" src="app.js?v=151"></script>
+  <script type="module" src="app.js?v=153"></script>
   <script>
     // Show body once styles are ready
     requestAnimationFrame(() => {

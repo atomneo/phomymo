@@ -137,7 +137,59 @@ export const STORAGE_KEYS = {
   MULTI_LABEL_PRESETS: 'phomymo_multi_label_presets',
   LOCAL_FONTS_ENABLED: 'phomymo_local_fonts_enabled',
   CUSTOM_PRINTERS: 'phomymo_custom_printers',
+  ICON_RECENT: 'phomymo_icon_recent',
+  ICON_FAVORITES: 'phomymo_icon_favorites',
 };
+
+// =============================================================================
+// ICON PICKER (Iconify)
+// =============================================================================
+export const ICON = {
+  API_BASE: 'https://api.iconify.design',
+  // Results rendered per "page" for both keyword search and library
+  // browsing. Both fetch their full result/name list once (search: one
+  // /search call at SEARCH_FETCH_LIMIT; browse: the library's full name
+  // list from /collection) and then page through it client-side by slicing
+  // that list into chunks of this size for "Load more" - see icon-picker.js.
+  PAGE_SIZE: 100,
+  // Iconify's /search hard-caps the effective max at 999, and (verified
+  // against the live API) rejects a `start` offset outright unless
+  // `start < limit` - which makes small incremental pages via `start`
+  // impractical. Fetching the whole (up to 999) result pool in one request
+  // and paginating client-side avoids that entirely.
+  SEARCH_FETCH_LIMIT: 999,
+  SEARCH_DEBOUNCE_MS: 250,
+  // Rendered SVG intrinsic size in px - large enough for a sharp downscale
+  // to any label size, small enough to keep the data URI compact.
+  RASTER_SIZE: 512,
+  // New icon's initial size as a fraction of the smaller label dimension.
+  DEFAULT_SIZE_FRACTION: 0.5,
+  MAX_RECENT: 20,
+  MAX_FAVORITES: 60,
+};
+
+// Curated shortlist shown at the top of the library picker, ahead of the
+// full dynamically-fetched Iconify collection list (see icons.js
+// fetchCollectionsList - it reads /collections, not a hardcoded list).
+// All of these happen to be monochrome sets (palette:false in Iconify's own
+// metadata) - deliberately so, since the print target is a 1-bit thermal
+// printer; colorful icon sets (emoji, logos, flags, ...) are left out of
+// this shortlist but remain reachable through the full library list.
+// Prefixes verified against the live /collections response - not guessed.
+export const ICON_RECOMMENDED_COLLECTIONS = [
+  { prefix: 'material-symbols', label: 'Material Symbols' },
+  { prefix: 'mdi', label: 'Material Design Icons' },
+  { prefix: 'tabler', label: 'Tabler Icons' },
+  { prefix: 'lucide', label: 'Lucide' },
+  { prefix: 'ph', label: 'Phosphor' },
+  { prefix: 'fa6-solid', label: 'Font Awesome 6' },
+  { prefix: 'bi', label: 'Bootstrap Icons' },
+  { prefix: 'heroicons', label: 'Heroicons' },
+  { prefix: 'ri', label: 'Remix Icon' },
+  { prefix: 'carbon', label: 'Carbon' },
+  { prefix: 'fluent', label: 'Fluent UI' },
+  { prefix: 'solar', label: 'Solar' },
+];
 
 // =============================================================================
 // LABEL SIZE PRESETS

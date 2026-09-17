@@ -1,7 +1,7 @@
 /**
  * Phomymo Label Designer Application
  * Multi-element label editor with drag, resize, and rotate
- * v116
+ * v117
  */
 
 import { CanvasRenderer } from './canvas.js?v=115';
@@ -11,6 +11,7 @@ import { print, printDensityTest, isDSeriesPrinter, isP12Printer, isA30Printer, 
 import {
   createTextElement,
   createImageElement,
+  createIconElement,
   createBarcodeElement,
   createQRElement,
   createShapeElement,
@@ -36,7 +37,8 @@ import {
   collapseToSingleZone,
   hasElementsInHigherZones,
   removeElementsInHigherZones,
-} from './elements.js?v=100';
+} from './elements.js?v=101';
+import { openIconPicker, closeIconPicker, isIconPickerOpen, initIconPicker } from './icon-picker.js?v=101';
 import {
   HandleType,
   getHandleAtPoint,
@@ -69,6 +71,7 @@ import {
   ZOOM,
   TEXT,
   IMAGE,
+  ICON,
   ELEMENT,
   LABEL,
   MULTI_LABEL,
@@ -84,7 +87,7 @@ import {
   D_SERIES_ROUND_LABELS,
   TAPE_LABEL_SIZES,
   PM241_LABEL_SIZES,
-} from './constants.js?v=105';
+} from './constants.js?v=107';
 import {
   bindCheckbox,
   bindToggleButton,
@@ -2375,6 +2378,15 @@ function updatePropertiesPanel() {
       $('#prop-image-brightness-input').value = element.brightness || 0;
       $('#prop-image-contrast').value = element.contrast || 0;
       $('#prop-image-contrast-input').value = element.contrast || 0;
+      // Vector icons: show source name + "Change icon", hide the raster-only
+      // controls (dithering here would silently override the global print
+      // dither mode - see getDitherMode()) and the file-replace button.
+      $('#props-icon-info').classList.toggle('hidden', !element.icon);
+      $('#props-image-raster').classList.toggle('hidden', !!element.icon);
+      $('#prop-replace-image').classList.toggle('hidden', !!element.icon);
+      if (element.icon) {
+        $('#prop-icon-name').textContent = `${element.icon.prefix}:${element.icon.name}`;
+      }
       break;
 
     case 'barcode':
@@ -4489,6 +4501,78 @@ async function addImageElement(file) {
 }
 
 /**
+ * Add a new icon element from the Icon Picker.
+ * Reuses the image element pipeline entirely (see createIconElement) - the
+ * only icon-specific behavior lives here: sizing a flat vector icon
+ * reasonably within the label, and tagging naturalWidth/naturalHeight to the
+ * insertion size so the Scale/Reset controls behave the same way they do
+ * for a freshly-imported photo.
+ * @param {{ prefix: string, name: string, dataUri: string, width: number, height: number }} icon
+ */
+function addIconElement(icon) {
+  const dims = state.renderer.getSingleLabelDimensions();
+  const targetSize = Math.min(dims.width, dims.height) * ICON.DEFAULT_SIZE_FRACTION;
+
+  // Preserve the icon's own aspect ratio (most Iconify icons are square, but
+  // not all - e.g. some logo/wordmark icons are wider than tall).
+  const aspect = (icon.width || 1) / (icon.height || 1);
+  const w = aspect >= 1 ? targetSize : targetSize * aspect;
+  const h = aspect >= 1 ? targetSize / aspect : targetSize;
+
+  const element = createIconElement(icon.dataUri, { prefix: icon.prefix, name: icon.name }, {
+    x: (dims.width - w) / 2,
+    y: (dims.height - h) / 2,
+    width: w,
+    height: h,
+    naturalWidth: w,
+    naturalHeight: h,
+    zone: state.activeZone,
+  });
+
+  saveHistory();
+  state.elements.push(element);
+  autoCloneIfEnabled();
+  selectElement(element.id);
+  setStatus(`Icon added: ${icon.prefix}:${icon.name}`);
+}
+
+/**
+ * Swap an existing icon element's artwork in place ("Change..." in the
+ * properties panel). Keeps the element's on-canvas footprint (its current
+ * center point and largest dimension) but re-fits width/height to the new
+ * icon's own aspect ratio - otherwise a non-square replacement icon (e.g. a
+ * wordmark) would render stretched inside the old box, since rendering just
+ * draws the SVG into whatever width/height the element currently has.
+ * @param {string} id - Element ID to update
+ * @param {{ prefix: string, name: string, dataUri: string, width: number, height: number }} icon
+ */
+function changeIconElement(id, icon) {
+  const element = state.elements.find((el) => el.id === id);
+  if (!element) return;
+
+  const cx = element.x + element.width / 2;
+  const cy = element.y + element.height / 2;
+  const targetSize = Math.max(element.width, element.height);
+
+  const aspect = (icon.width || 1) / (icon.height || 1);
+  const w = aspect >= 1 ? targetSize : targetSize * aspect;
+  const h = aspect >= 1 ? targetSize / aspect : targetSize;
+
+  saveHistory();
+  modifyElement(id, {
+    imageData: icon.dataUri,
+    icon: { prefix: icon.prefix, name: icon.name },
+    x: cx - w / 2,
+    y: cy - h / 2,
+    width: w,
+    height: h,
+    naturalWidth: w,
+    naturalHeight: h,
+  });
+  setStatus(`Icon changed to ${icon.prefix}:${icon.name}`);
+}
+
+/**
  * Add a new barcode element
  */
 function addBarcodeElement() {
@@ -5247,7 +5331,7 @@ function getElementLabel(el) {
     case 'text':
       return el.text ? (el.text.substring(0, 20) + (el.text.length > 20 ? '...' : '')) : 'Text';
     case 'image':
-      return 'Image';
+      return el.icon ? `Icon: ${el.icon.name}` : 'Image';
     case 'barcode':
       return el.barcodeData ? `Barcode: ${el.barcodeData.substring(0, 10)}` : 'Barcode';
     case 'qr':
@@ -5423,7 +5507,9 @@ function handleKeyDown(e) {
 
   // Escape to deselect or close modals
   if (e.key === 'Escape') {
-    if ($('#shortcuts-modal').classList.contains('hidden') === false) {
+    if (isIconPickerOpen()) {
+      closeIconPicker();
+    } else if ($('#shortcuts-modal').classList.contains('hidden') === false) {
       hideShortcutsModal();
     } else if ($('#info-dialog').classList.contains('hidden') === false) {
       hideInfoDialog();
@@ -5969,6 +6055,7 @@ function initMobileUI() {
   // Fixed toolbar - add element buttons
   $('#mobile-add-text')?.addEventListener('click', () => addTextElement());
   $('#mobile-add-image')?.addEventListener('click', () => $('#image-file-input').click());
+  $('#mobile-add-icon')?.addEventListener('click', () => openIconPicker({ onSelect: addIconElement }));
   $('#mobile-add-rect')?.addEventListener('click', () => addShapeElement('rectangle'));
   $('#mobile-add-ellipse')?.addEventListener('click', () => addShapeElement('ellipse'));
   $('#mobile-add-line')?.addEventListener('click', () => addShapeElement('line'));
@@ -6361,6 +6448,12 @@ function populateMobileProps() {
     const scaleH = selected.naturalHeight ? (selected.height / selected.naturalHeight) * 100 : 100;
     const currentScale = Math.round(Math.max(scaleW, scaleH));
     html += `
+      ${selected.icon ? `
+      <div class="prop-group flex items-center justify-between gap-2">
+        <span class="text-xs text-gray-500 truncate">${escapeHtml(selected.icon.prefix)}:${escapeHtml(selected.icon.name)}</span>
+        <button id="mobile-prop-change-icon" class="px-2 py-1 text-xs border border-gray-300 rounded whitespace-nowrap bg-white">Change…</button>
+      </div>
+      ` : ''}
       <div class="prop-group">
         <div class="prop-label">Scale: ${currentScale}%</div>
         <input type="range" id="mobile-prop-scale" class="w-full" min="10" max="200" value="${currentScale}">
@@ -6371,6 +6464,7 @@ function populateMobileProps() {
           <span class="text-sm">Lock aspect ratio</span>
         </label>
       </div>
+      ${selected.icon ? '' : `
       <div class="prop-group">
         <div class="prop-label">Dithering</div>
         <select id="mobile-prop-dither" class="prop-input">
@@ -6388,6 +6482,7 @@ function populateMobileProps() {
         <div class="prop-label">Contrast</div>
         <input type="range" id="mobile-prop-contrast" class="w-full" min="-100" max="100" value="${selected.contrast || 0}">
       </div>
+      `}
     `;
   }
 
@@ -6703,6 +6798,16 @@ function wireUpMobilePropHandlers(element) {
     contrastInput.addEventListener('change', saveOnBlur('contrast'));
   }
   $('#mobile-prop-dither')?.addEventListener('change', (e) => updateProp('dither', e.target.value));
+
+  $('#mobile-prop-change-icon')?.addEventListener('click', () => {
+    const id = state.selectedIds[0];
+    if (!id) return;
+    openIconPicker({
+      onSelect: (icon) => {
+        changeIconElement(id, icon);
+      },
+    });
+  });
 }
 
 /**
@@ -7065,6 +7170,9 @@ function init() {
   // Initialize local fonts (show button or auto-load if previously enabled)
   initLocalFonts();
 
+  // Wire up the icon picker modal's static controls (search, collection select, close/retry)
+  initIconPicker();
+
   // Load printer definitions (built-in + custom) then populate dropdown
   loadPrinterDefinitions().then(() => {
     populatePrinterModelDropdown();
@@ -7387,6 +7495,7 @@ function init() {
       e.target.value = '';
     }
   });
+  $('#add-icon').addEventListener('click', () => openIconPicker({ onSelect: addIconElement }));
   $('#add-barcode').addEventListener('click', addBarcodeElement);
   $('#add-qr').addEventListener('click', addQRElement);
 
@@ -7653,6 +7762,16 @@ function init() {
 
   // Properties panel - image
   $('#prop-replace-image').addEventListener('click', () => $('#prop-image-input').click());
+
+  // Change icon - reopen the icon picker and swap the current icon element's
+  // artwork in place (keeps center point, re-fits size to the new icon's aspect ratio)
+  $('#prop-change-icon')?.addEventListener('click', () => {
+    const id = state.selectedIds[0];
+    if (!id) return;
+    openIconPicker({
+      onSelect: (icon) => changeIconElement(id, icon),
+    });
+  });
   $('#prop-image-input').addEventListener('change', async (e) => {
     const id = state.selectedIds[0];
     const file = e.target.files[0];
