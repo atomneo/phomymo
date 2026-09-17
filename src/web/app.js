@@ -37,6 +37,7 @@ import {
   collapseToSingleZone,
   hasElementsInHigherZones,
   removeElementsInHigherZones,
+  generateGroupId,
 } from './elements.js?v=101';
 import { openIconPicker, closeIconPicker, isIconPickerOpen, initIconPicker } from './icon-picker.js?v=101';
 import {
@@ -231,6 +232,479 @@ const state = {
 
 // Note: GUIDES.SNAP_THRESHOLD, HISTORY.MAX_SIZE, and STORAGE_KEYS are imported from constants.js
 
+// =============================================================================
+// MULTI-PAGE PROJECT STATE
+// =============================================================================
+
+const project = {
+  name: null,
+  pages: [],
+  activePageId: null,
+};
+
+function generatePageId() {
+  return 'page_' + Date.now().toString(36) + Math.random().toString(36).substr(2, 9);
+}
+
+function getActivePage() {
+  return project.pages.find(p => p.id === project.activePageId);
+}
+
+function saveActivePageState() {
+  const p = getActivePage();
+  if (!p) return;
+  p.elements = JSON.parse(JSON.stringify(state.elements));
+  p.labelSize = { ...state.labelSize };
+  p.history = state.history;
+  p.historyIndex = state.historyIndex;
+  p.multiLabel = JSON.parse(JSON.stringify(state.multiLabel));
+  p.templateFields = [...state.templateFields];
+  p.locked = p.locked || false;
+}
+
+function loadPageIntoState(page) {
+  state.elements = JSON.parse(JSON.stringify(page.elements));
+  state.labelSize = { ...page.labelSize };
+  state.history = page.history || [];
+  state.historyIndex = page.historyIndex ?? -1;
+  Object.assign(state.multiLabel, page.multiLabel || { enabled: false, labelWidth: 10, labelHeight: 20, labelsAcross: 4, gapMm: 2, cloneMode: true });
+  state.selectedIds = [];
+  state.alignmentGuides = [];
+}
+
+function duplicatePageElements(sourceElements) {
+  const idMap = {};
+  const groupIdMap = {};
+  for (const el of sourceElements) {
+    idMap[el.id] = 'el_' + Date.now().toString(36) + Math.random().toString(36).substr(2, 9);
+    if (el.groupId && !groupIdMap[el.groupId]) {
+      groupIdMap[el.groupId] = 'grp_' + Date.now().toString(36) + Math.random().toString(36).substr(2, 9);
+    }
+  }
+  return sourceElements.map(el => ({
+    ...JSON.parse(JSON.stringify(el)),
+    id: idMap[el.id],
+    groupId: el.groupId ? groupIdMap[el.groupId] : null,
+  }));
+}
+
+let _thumbDebounceTimer = null;
+function debouncedThumbUpdate() {
+  clearTimeout(_thumbDebounceTimer);
+  _thumbDebounceTimer = setTimeout(() => {
+    const p = getActivePage();
+    if (p) updatePageThumbnail(p);
+  }, 500);
+}
+
+function updatePageThumbnail(page) {
+  const tile = document.querySelector(`.page-tile[data-page-id="${page.id}"]`);
+  if (!tile) return;
+  const thumbCanvas = tile.querySelector('.page-thumbnail');
+  if (!thumbCanvas) return;
+
+  const aspect = page.labelSize.height / page.labelSize.width;
+  const thumbW = 112;
+  const thumbH = Math.max(20, Math.round(thumbW * aspect));
+  thumbCanvas.width = thumbW;
+  thumbCanvas.height = thumbH;
+
+  const offscreen = document.createElement('canvas');
+  const tempRenderer = new CanvasRenderer(offscreen);
+  tempRenderer.setDimensions(page.labelSize.width, page.labelSize.height, 1, page.labelSize.round || false);
+  if (page.multiLabel?.enabled) {
+    tempRenderer.setMultiLabelDimensions(page.multiLabel.labelWidth, page.multiLabel.labelHeight, page.multiLabel.labelsAcross, page.multiLabel.gapMm);
+  }
+  tempRenderer.renderAll(page.elements, [], []);
+
+  const ctx = thumbCanvas.getContext('2d');
+  ctx.clearRect(0, 0, thumbW, thumbH);
+  ctx.drawImage(offscreen, 0, 0, thumbW, thumbH);
+}
+
+function renderPageTile(page, isActive) {
+  const lockedIcon = page.locked
+    ? `<span class="absolute top-0.5 right-0.5 text-xs leading-none pointer-events-none" title="Locked">&#128274;</span>`
+    : '';
+  return `
+    <div class="page-tile group relative px-1.5 py-1.5 cursor-pointer rounded mx-1 my-0.5 ${isActive ? 'bg-white ring-2 ring-blue-500' : 'hover:bg-white'}" data-page-id="${page.id}" draggable="true">
+      <canvas class="page-thumbnail w-full rounded border border-gray-200 block" width="112" height="80"></canvas>
+      ${lockedIcon}
+      <div class="page-tile-name text-xs text-center mt-1 truncate ${page.locked ? 'opacity-50' : 'text-gray-700'}" title="${escapeHtml(page.name)}">${escapeHtml(page.name)}</div>
+      <button class="page-tile-menu absolute top-0.5 right-0.5 hidden group-hover:flex items-center justify-center w-5 h-5 text-gray-400 hover:text-gray-700 bg-white rounded shadow-sm text-xs leading-none" data-page-id="${page.id}" title="Page options">&#8943;</button>
+    </div>
+  `;
+}
+
+function updatePagesPanelUI() {
+  const list = document.getElementById('pages-list');
+  if (!list) return;
+
+  list.innerHTML = project.pages.map(p => renderPageTile(p, p.id === project.activePageId)).join('');
+
+  project.pages.forEach(p => updatePageThumbnail(p));
+
+  list.querySelectorAll('.page-tile').forEach(tile => {
+    tile.addEventListener('click', (e) => {
+      if (e.target.classList.contains('page-tile-menu') || e.target.closest('.page-tile-menu')) return;
+      const pageId = tile.dataset.pageId;
+      if (pageId !== project.activePageId) switchToPage(pageId);
+    });
+
+    const menuBtn = tile.querySelector('.page-tile-menu');
+    if (menuBtn) {
+      menuBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        showPageContextMenu(e, tile.dataset.pageId);
+      });
+    }
+
+    tile.addEventListener('dragstart', (e) => {
+      e.dataTransfer.setData('text/plain', tile.dataset.pageId);
+      tile.style.opacity = '0.5';
+    });
+    tile.addEventListener('dragend', () => {
+      tile.style.opacity = '';
+      list.querySelectorAll('.page-tile').forEach(t => t.classList.remove('drag-over'));
+    });
+    tile.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      list.querySelectorAll('.page-tile').forEach(t => t.classList.remove('drag-over'));
+      tile.classList.add('drag-over');
+    });
+    tile.addEventListener('drop', (e) => {
+      e.preventDefault();
+      const draggedId = e.dataTransfer.getData('text/plain');
+      if (draggedId && draggedId !== tile.dataset.pageId) {
+        const tileIds = [...list.querySelectorAll('.page-tile')].map(t => t.dataset.pageId);
+        const dropIdx = tileIds.indexOf(tile.dataset.pageId);
+        const newOrder = [];
+        tileIds.forEach((id, i) => {
+          if (id === draggedId) return;
+          if (i === dropIdx) newOrder.push(draggedId);
+          newOrder.push(id);
+        });
+        if (!newOrder.includes(draggedId)) newOrder.push(draggedId);
+        reorderPages(newOrder);
+      }
+      list.querySelectorAll('.page-tile').forEach(t => t.classList.remove('drag-over'));
+    });
+  });
+
+  const printAllBtn = document.getElementById('print-all-btn');
+  if (printAllBtn) {
+    const allSameSize = new Set(project.pages.map(p => `${p.labelSize.width}x${p.labelSize.height}`)).size <= 1;
+    printAllBtn.disabled = !allSameSize || project.pages.length < 2;
+    printAllBtn.title = allSameSize
+      ? 'Print All Pages'
+      : 'Print All requires all pages to have the same label size.';
+  }
+}
+
+let _pageContextMenu = null;
+function showPageContextMenu(e, pageId) {
+  if (_pageContextMenu) _pageContextMenu.remove();
+  const page = project.pages.find(p => p.id === pageId);
+  if (!page) return;
+
+  const menu = document.createElement('div');
+  menu.className = 'fixed z-[200] bg-white border border-gray-200 rounded-lg shadow-xl py-1 text-sm min-w-[140px]';
+  menu.style.left = `${Math.min(e.clientX, window.innerWidth - 160)}px`;
+  menu.style.top = `${Math.min(e.clientY, window.innerHeight - 120)}px`;
+
+  const items = [
+    { label: 'Rename', action: () => startPageRename(pageId) },
+    { label: 'Duplicate', action: () => duplicatePage(pageId) },
+    { label: page.locked ? 'Unlock page' : 'Lock page', action: () => togglePageLock(pageId) },
+    { label: 'Delete', action: () => deletePage(pageId), danger: true },
+  ];
+
+  items.forEach(item => {
+    const btn = document.createElement('button');
+    btn.className = `w-full text-left px-3 py-1.5 hover:bg-gray-100 ${item.danger ? 'text-red-600 hover:bg-red-50' : 'text-gray-700'}`;
+    btn.textContent = item.label;
+    btn.addEventListener('click', () => {
+      menu.remove();
+      _pageContextMenu = null;
+      item.action();
+    });
+    menu.appendChild(btn);
+  });
+
+  document.body.appendChild(menu);
+  _pageContextMenu = menu;
+
+  const close = (ev) => {
+    if (!menu.contains(ev.target)) {
+      menu.remove();
+      _pageContextMenu = null;
+      document.removeEventListener('click', close, true);
+    }
+  };
+  setTimeout(() => document.addEventListener('click', close, true), 0);
+}
+
+function startPageRename(pageId) {
+  const tile = document.querySelector(`.page-tile[data-page-id="${pageId}"]`);
+  if (!tile) return;
+  const nameEl = tile.querySelector('.page-tile-name');
+  const page = project.pages.find(p => p.id === pageId);
+  if (!nameEl || !page) return;
+
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.value = page.name;
+  input.className = 'text-xs w-full border border-blue-400 rounded px-1 outline-none text-center';
+
+  nameEl.replaceWith(input);
+  input.focus();
+  input.select();
+
+  const finish = () => {
+    const newName = input.value.trim() || page.name;
+    page.name = newName;
+    input.replaceWith(nameEl);
+    nameEl.textContent = newName;
+    nameEl.title = newName;
+  };
+
+  input.addEventListener('blur', finish);
+  input.addEventListener('keydown', (ev) => {
+    if (ev.key === 'Enter') input.blur();
+    if (ev.key === 'Escape') { input.value = page.name; input.blur(); }
+  });
+}
+
+function switchToPage(pageId) {
+  if (pageId === project.activePageId) return;
+
+  if (state.editingTextId) {
+    const editor = document.getElementById('inline-text-editor');
+    if (editor) editor.dispatchEvent(new Event('blur'));
+    state.editingTextId = null;
+  }
+
+  saveActivePageState();
+
+  project.activePageId = pageId;
+  const page = getActivePage();
+  if (!page) return;
+
+  loadPageIntoState(page);
+
+  if (page.multiLabel?.enabled) {
+    state.multiLabel = JSON.parse(JSON.stringify(page.multiLabel));
+    state.renderer.setMultiLabelDimensions(page.multiLabel.labelWidth, page.multiLabel.labelHeight, page.multiLabel.labelsAcross, page.multiLabel.gapMm);
+    state.renderer.setActiveZone(0);
+    state.activeZone = 0;
+    updateZoneToolbar();
+    document.getElementById('label-size').value = 'multi-label';
+    document.getElementById('custom-size').classList.add('hidden');
+  } else {
+    state.renderer.disableMultiLabel();
+    document.getElementById('zone-toolbar').classList.add('hidden');
+
+    const sizeKey = page.labelSize.round
+      ? `${page.labelSize.width}mm Round`
+      : `${page.labelSize.width}x${page.labelSize.height}`;
+    const select = document.getElementById('label-size');
+    if (LABEL_SIZES[sizeKey]) {
+      select.value = sizeKey;
+      document.getElementById('custom-size').classList.add('hidden');
+    } else {
+      select.value = 'custom';
+      document.getElementById('custom-size').classList.remove('hidden');
+      document.getElementById('custom-width').value = page.labelSize.width;
+      document.getElementById('custom-height').value = page.labelSize.height;
+    }
+    state.renderer.setDimensions(page.labelSize.width, page.labelSize.height, state.zoom, page.labelSize.round || false);
+  }
+
+  state.renderer.clearCache();
+  applyLockState();
+  detectTemplateFields();
+  updatePrintSize();
+  updateToolbarState();
+  updatePropertiesPanel();
+  updateUndoRedoButtons();
+  render();
+  updatePagesPanelUI();
+}
+
+function addPage() {
+  saveActivePageState();
+  const activePage = getActivePage();
+  const newPage = {
+    id: generatePageId(),
+    name: `Page ${project.pages.length + 1}`,
+    labelSize: activePage ? { ...activePage.labelSize } : { width: 40, height: 30 },
+    elements: [],
+    history: [],
+    historyIndex: -1,
+    multiLabel: { enabled: false, labelWidth: 10, labelHeight: 20, labelsAcross: 4, gapMm: 2, cloneMode: true },
+    templateFields: [],
+    locked: false,
+  };
+  project.pages.push(newPage);
+  project.activePageId = newPage.id;
+  loadPageIntoState(newPage);
+  state.renderer.disableMultiLabel();
+  state.renderer.setDimensions(newPage.labelSize.width, newPage.labelSize.height, state.zoom, newPage.labelSize.round || false);
+  state.renderer.clearCache();
+  applyLockState();
+  detectTemplateFields();
+  updatePrintSize();
+  updateToolbarState();
+  updatePropertiesPanel();
+  updateUndoRedoButtons();
+  const sizeKey = newPage.labelSize.round
+    ? `${newPage.labelSize.width}mm Round`
+    : `${newPage.labelSize.width}x${newPage.labelSize.height}`;
+  const select = document.getElementById('label-size');
+  if (LABEL_SIZES[sizeKey]) {
+    select.value = sizeKey;
+    document.getElementById('custom-size').classList.add('hidden');
+  } else {
+    select.value = 'custom';
+    document.getElementById('custom-size').classList.remove('hidden');
+    document.getElementById('custom-width').value = newPage.labelSize.width;
+    document.getElementById('custom-height').value = newPage.labelSize.height;
+  }
+  render();
+  updatePagesPanelUI();
+}
+
+function duplicatePage(pageId) {
+  saveActivePageState();
+  const srcIdx = project.pages.findIndex(p => p.id === pageId);
+  if (srcIdx === -1) return;
+  const src = project.pages[srcIdx];
+  const newPage = {
+    id: generatePageId(),
+    name: `${src.name} copy`,
+    labelSize: { ...src.labelSize },
+    elements: duplicatePageElements(src.elements),
+    history: [],
+    historyIndex: -1,
+    multiLabel: JSON.parse(JSON.stringify(src.multiLabel)),
+    templateFields: [...src.templateFields],
+    locked: false,
+  };
+  project.pages.splice(srcIdx + 1, 0, newPage);
+  project.activePageId = newPage.id;
+  loadPageIntoState(newPage);
+  if (newPage.multiLabel?.enabled) {
+    state.renderer.setMultiLabelDimensions(newPage.multiLabel.labelWidth, newPage.multiLabel.labelHeight, newPage.multiLabel.labelsAcross, newPage.multiLabel.gapMm);
+    document.getElementById('label-size').value = 'multi-label';
+    document.getElementById('custom-size').classList.add('hidden');
+  } else {
+    state.renderer.disableMultiLabel();
+    state.renderer.setDimensions(newPage.labelSize.width, newPage.labelSize.height, state.zoom, newPage.labelSize.round || false);
+    const sizeKey = newPage.labelSize.round
+      ? `${newPage.labelSize.width}mm Round`
+      : `${newPage.labelSize.width}x${newPage.labelSize.height}`;
+    const select = document.getElementById('label-size');
+    if (LABEL_SIZES[sizeKey]) {
+      select.value = sizeKey;
+      document.getElementById('custom-size').classList.add('hidden');
+    } else {
+      select.value = 'custom';
+      document.getElementById('custom-size').classList.remove('hidden');
+      document.getElementById('custom-width').value = newPage.labelSize.width;
+      document.getElementById('custom-height').value = newPage.labelSize.height;
+    }
+  }
+  state.renderer.clearCache();
+  applyLockState();
+  detectTemplateFields();
+  updatePrintSize();
+  updateToolbarState();
+  updatePropertiesPanel();
+  updateUndoRedoButtons();
+  render();
+  updatePagesPanelUI();
+}
+
+function deletePage(pageId) {
+  if (project.pages.length <= 1) return;
+  const page = project.pages.find(p => p.id === pageId);
+  if (!page) return;
+  if (!confirm(`Delete page "${page.name}"?`)) return;
+
+  const idx = project.pages.indexOf(page);
+  project.pages.splice(idx, 1);
+
+  if (project.activePageId === pageId) {
+    const newIdx = Math.min(idx, project.pages.length - 1);
+    const newPage = project.pages[newIdx];
+    project.activePageId = newPage.id;
+    loadPageIntoState(newPage);
+    if (newPage.multiLabel?.enabled) {
+      state.renderer.setMultiLabelDimensions(newPage.multiLabel.labelWidth, newPage.multiLabel.labelHeight, newPage.multiLabel.labelsAcross, newPage.multiLabel.gapMm);
+    } else {
+      state.renderer.disableMultiLabel();
+      state.renderer.setDimensions(newPage.labelSize.width, newPage.labelSize.height, state.zoom, newPage.labelSize.round || false);
+    }
+    state.renderer.clearCache();
+    applyLockState();
+    detectTemplateFields();
+    updatePrintSize();
+    updateToolbarState();
+    updatePropertiesPanel();
+    updateUndoRedoButtons();
+    render();
+  }
+  updatePagesPanelUI();
+}
+
+function reorderPages(newPageIds) {
+  project.pages = newPageIds.map(id => project.pages.find(p => p.id === id)).filter(Boolean);
+  updatePagesPanelUI();
+}
+
+function isActivePageLocked() {
+  return getActivePage()?.locked === true;
+}
+
+function applyLockState() {
+  const locked = isActivePageLocked();
+  const container = document.getElementById('canvas-container');
+  const lockBanner = document.getElementById('page-lock-banner');
+  const propsPanel = document.getElementById('props-panel');
+
+  if (container) container.classList.toggle('page-locked', locked);
+  if (lockBanner) lockBanner.classList.toggle('hidden', !locked);
+  if (propsPanel) {
+    propsPanel.classList.toggle('pointer-events-none', locked);
+    propsPanel.classList.toggle('opacity-60', locked);
+  }
+
+  const editBtns = ['add-text', 'add-image', 'add-icon', 'add-barcode', 'add-qr', 'add-shape',
+    'dup-btn', 'del-btn', 'group-btn', 'ungroup-btn', 'bring-front-btn', 'send-back-btn'];
+  editBtns.forEach(id => {
+    const btn = document.getElementById(id);
+    if (btn) btn.disabled = locked;
+  });
+
+  const sizeCtrls = ['label-size', 'custom-width', 'custom-height', 'custom-round', 'custom-continuous'];
+  sizeCtrls.forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.disabled = locked;
+  });
+}
+
+function togglePageLock(pageId) {
+  const page = project.pages.find(p => p.id === pageId);
+  if (!page) return;
+  page.locked = !page.locked;
+  if (pageId === project.activePageId) applyLockState();
+  updatePagesPanelUI();
+}
+
+// =============================================================================
+// END MULTI-PAGE PROJECT STATE
+// =============================================================================
+
 /**
  * Get saved device-to-model mappings from localStorage
  * @returns {Object} Map of deviceName -> printerModel
@@ -399,6 +873,8 @@ function getDitherMode(elements) {
  * Save current state to history (call before modifications)
  */
 function saveHistory() {
+  if (isActivePageLocked()) return;
+
   // Deep clone current elements
   const snapshot = JSON.parse(JSON.stringify(state.elements));
 
@@ -418,6 +894,7 @@ function saveHistory() {
   }
 
   updateUndoRedoButtons();
+  debouncedThumbUpdate();
 }
 
 // Track input values for change detection on blur
@@ -2469,6 +2946,8 @@ function handleLabelSizeChange() {
   }
 
   state.renderer.setDimensions(state.labelSize.width, state.labelSize.height, state.zoom, state.labelSize.round || false);
+  const _activePage = getActivePage();
+  if (_activePage) _activePage.labelSize = { ...state.labelSize };
   updatePrintSize();
   updateLengthAdjustButtons();
 
@@ -2476,6 +2955,7 @@ function handleLabelSizeChange() {
   zoomToFitIfNeeded();
 
   render();
+  updatePagesPanelUI();
 }
 
 /**
@@ -2501,6 +2981,8 @@ function handleCustomSizeChange() {
 
   state.labelSize = { width: w, height: h, round: isRound, continuous: isContinuous };
   state.renderer.setDimensions(state.labelSize.width, state.labelSize.height, state.zoom, isRound);
+  const _activePage2 = getActivePage();
+  if (_activePage2) _activePage2.labelSize = { ...state.labelSize };
   updatePrintSize();
   updateLengthAdjustButtons();
 
@@ -2508,6 +2990,7 @@ function handleCustomSizeChange() {
   zoomToFitIfNeeded();
 
   render();
+  updatePagesPanelUI();
 
   // Sync to mobile custom inputs
   if ($('#mobile-custom-width')) $('#mobile-custom-width').value = w;
@@ -3010,6 +3493,8 @@ function getBoundsWithCanvasPos(bounds, zoneIndex) {
  * Handle canvas mouse down
  */
 function handleCanvasMouseDown(e) {
+  if (isActivePageLocked()) return;
+
   const pos = getCanvasPos(e);
 
   // If inline editing is active, clicking on canvas closes it
@@ -3556,6 +4041,8 @@ function resetPanOffset() {
  * Handle canvas pointer down (unified touch/mouse)
  */
 function handleCanvasPointerDown(e) {
+  if (isActivePageLocked()) return;
+
   // Skip if touch events are handling this (prevents double-handling on iOS)
   if (state.pointer.usingTouch && e.pointerType === 'touch') {
     return;
@@ -4899,6 +5386,70 @@ async function handlePrint() {
   }
 }
 
+async function handlePrintAll() {
+  const sizes = project.pages.map(p => `${p.labelSize.width}x${p.labelSize.height}`);
+  if (new Set(sizes).size > 1) {
+    showToast('Print All requires all pages to have the same label size.', 'warning');
+    return;
+  }
+
+  saveActivePageState();
+
+  if (!state.transport || !state.transport.isConnected()) {
+    setStatus('Connecting...');
+    await handleConnect();
+    if (!state.transport || !state.transport.isConnected()) return;
+  }
+
+  const total = project.pages.length;
+  const deviceName = state.transport.getDeviceName?.() || '';
+  const { density, feed, printerModel } = state.printSettings;
+
+  for (let i = 0; i < project.pages.length; i++) {
+    const page = project.pages[i];
+    setStatus(`Printing page ${i + 1}/${total}: ${page.name}...`);
+
+    const elements = state.templateData.length > 0
+      ? substituteFields(page.elements, state.templateData[0])
+      : page.elements;
+    const elementsToRender = evaluateExpressions(elements);
+
+    const tempCanvas = document.createElement('canvas');
+    const tempRenderer = new CanvasRenderer(tempCanvas);
+    tempRenderer.setDimensions(page.labelSize.width, page.labelSize.height, 1, page.labelSize.round || false);
+    if (page.multiLabel?.enabled) {
+      tempRenderer.setMultiLabelDimensions(page.multiLabel.labelWidth, page.multiLabel.labelHeight, page.multiLabel.labelsAcross, page.multiLabel.gapMm);
+    }
+
+    const printerWidth = getPrinterWidthBytes(deviceName, printerModel);
+    const printerDpi = getPrinterDpi(deviceName, printerModel);
+    const printerAlignment = getPrinterAlignment(deviceName, printerModel);
+    let ditherMode = getDitherMode(elementsToRender);
+    if (ditherMode === 'auto' && isTSPLPrinter(deviceName, printerModel)) ditherMode = 'threshold';
+
+    const rasterData = isRotatedPrinter(deviceName, printerModel)
+      ? tempRenderer.getRasterDataRaw(elementsToRender, ditherMode)
+      : tempRenderer.getRasterData(elementsToRender, printerWidth, printerDpi, ditherMode, printerAlignment);
+
+    try {
+      await print(state.transport, rasterData, {
+        isBLE: state.connectionType === 'ble',
+        deviceName,
+        printerModel,
+        density,
+        feed,
+        continuous: !!(page.labelSize?.continuous),
+      });
+    } catch (err) {
+      showToast(`Print failed on page "${page.name}": ${err.message}`, 'error');
+      setStatus('Print All failed');
+      return;
+    }
+  }
+
+  setStatus(`Printed ${total} page${total !== 1 ? 's' : ''}`);
+}
+
 /**
  * Show info dialog
  */
@@ -4949,36 +5500,29 @@ function handleSave() {
   const name = nameValidation.sanitized;
 
   try {
-    const designData = {
-      elements: state.elements,
-      labelSize: state.labelSize,
+    saveActivePageState();
+    const projectData = {
+      pages: project.pages.map(p => ({
+        id: p.id,
+        name: p.name,
+        labelSize: p.labelSize,
+        elements: p.elements,
+        locked: p.locked || false,
+        ...(p.multiLabel?.enabled ? { multiLabel: p.multiLabel } : {}),
+        ...(p.templateFields?.length ? { isTemplate: true, templateFields: p.templateFields } : {}),
+      })),
+      activePageId: project.activePageId,
+      ...(state.templateData.length ? { templateData: state.templateData } : {}),
     };
 
-    // Include template data if present
-    if (state.templateFields.length > 0) {
-      designData.isTemplate = true;
-      designData.templateFields = state.templateFields;
-    }
-    if (state.templateData.length > 0) {
-      designData.templateData = state.templateData;
-    }
-
-    // Include multi-label config if enabled
-    if (state.multiLabel.enabled) {
-      designData.multiLabel = { ...state.multiLabel };
-    }
-
-    saveDesign(name, designData);
+    saveDesign(name, projectData);
     hideSaveDialog();
 
-    // Update current design name and mobile display
+    project.name = name;
     state.currentDesignName = name;
     updateMobileLabelName();
 
-    const templateInfo = state.templateData.length > 0
-      ? ` (with ${state.templateData.length} data records)`
-      : '';
-    setStatus(`Design "${name}" saved${templateInfo}`);
+    setStatus(`Design "${name}" saved`);
   } catch (e) {
     showToast(e.message, 'error');
     setStatus(e.message);
@@ -5009,6 +5553,9 @@ function showLoadDialog() {
       }
       if (d.isMultiLabel) {
         badges.push(`<span class="px-1.5 py-0.5 text-xs bg-orange-100 text-orange-700 rounded">${d.multiLabel.labelsAcross}-up</span>`);
+      }
+      if (d.pageCount > 1) {
+        badges.push(`<span class="px-1.5 py-0.5 text-xs bg-gray-100 text-gray-700 rounded">${d.pageCount} pages</span>`);
       }
 
       const badgeHtml = badges.length > 0 ? `<div class="flex gap-1 mt-1">${badges.join('')}</div>` : '';
@@ -5057,35 +5604,31 @@ function hideLoadDialog() {
  * Export current design to file
  */
 function handleExport() {
-  if (state.elements.length === 0) {
+  const hasElements = project.pages.some(p => p.elements.length > 0) || state.elements.length > 0;
+  if (!hasElements) {
     setStatus('Nothing to export');
     return;
   }
 
-  // Build export data
+  saveActivePageState();
+
   const exportData = {
-    name: 'Untitled Design',
-    version: 3, // Version 3 includes multi-label support
-    elements: state.elements,
-    labelSize: state.labelSize,
+    name: project.name || state.currentDesignName || 'Untitled Design',
+    version: 4,
     exportedAt: new Date().toISOString(),
+    activePageId: project.activePageId,
+    pages: project.pages.map(p => ({
+      id: p.id,
+      name: p.name,
+      labelSize: p.labelSize,
+      elements: p.elements,
+      locked: p.locked || false,
+      ...(p.multiLabel?.enabled ? { multiLabel: p.multiLabel } : {}),
+      ...(p.templateFields?.length ? { isTemplate: true, templateFields: p.templateFields } : {}),
+    })),
+    ...(state.templateData.length ? { templateData: state.templateData } : {}),
   };
 
-  // Include template data if present
-  if (state.templateFields.length > 0) {
-    exportData.isTemplate = true;
-    exportData.templateFields = state.templateFields;
-  }
-  if (state.templateData.length > 0) {
-    exportData.templateData = state.templateData;
-  }
-
-  // Include multi-label config if enabled
-  if (state.multiLabel.enabled) {
-    exportData.multiLabel = { ...state.multiLabel };
-  }
-
-  // Create and download file
   const jsonString = JSON.stringify(exportData, null, 2);
   const blob = new Blob([jsonString], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
@@ -5208,13 +5751,63 @@ function handleImportFile(file) {
     try {
       const data = JSON.parse(e.target.result);
 
-      // Validate the data
+      // Handle v4 multi-page format
+      if (data.pages && Array.isArray(data.pages)) {
+        project.pages = data.pages.map(p => ({
+          ...p,
+          history: [],
+          historyIndex: -1,
+          locked: p.locked || false,
+          multiLabel: p.multiLabel || { enabled: false, labelWidth: 10, labelHeight: 20, labelsAcross: 4, gapMm: 2, cloneMode: true },
+          templateFields: p.templateFields || [],
+        }));
+        project.activePageId = data.activePageId || project.pages[0].id;
+        project.name = data.name || null;
+        state.templateData = data.templateData || [];
+        state.selectedRecords = state.templateData.map((_, i) => i);
+
+        const activePage = getActivePage();
+        loadPageIntoState(activePage);
+        state.renderer.setDimensions(state.labelSize.width, state.labelSize.height, state.zoom, state.labelSize.round || false);
+        state.renderer.clearCache();
+        resetHistory();
+        applyLockState();
+        detectTemplateFields();
+        updatePrintSize();
+        updateToolbarState();
+        updatePropertiesPanel();
+        render();
+        updatePagesPanelUI();
+        const importedName = data.name || 'Imported design';
+        state.currentDesignName = importedName;
+        updateMobileLabelName();
+        setStatus(`Imported: ${importedName} (${project.pages.length} page${project.pages.length !== 1 ? 's' : ''})`);
+        return;
+      }
+
+      // Legacy v3 / v1 / v2 format
       if (!data.elements || !Array.isArray(data.elements)) {
         throw new Error('Invalid design file: missing elements');
       }
 
       // Load the design
       state.elements = data.elements;
+
+      // Sync project with loaded state
+      const legacyPageId = generatePageId();
+      project.pages = [{
+        id: legacyPageId,
+        name: 'Page 1',
+        labelSize: data.labelSize || state.labelSize,
+        elements: data.elements,
+        history: [],
+        historyIndex: -1,
+        multiLabel: { enabled: false, labelWidth: 10, labelHeight: 20, labelsAcross: 4, gapMm: 2, cloneMode: true },
+        templateFields: [],
+        locked: false,
+      }];
+      project.activePageId = legacyPageId;
+      project.name = data.name || null;
 
       // Load label size if present
       if (data.labelSize) {
@@ -5246,6 +5839,7 @@ function handleImportFile(file) {
       state.renderer.setDimensions(state.labelSize.width, state.labelSize.height, state.zoom, state.labelSize.round || false);
       state.renderer.clearCache();
       resetHistory();
+      applyLockState();
       updatePrintSize();
       updateToolbarState();
       updatePropertiesPanel();
@@ -5255,6 +5849,7 @@ function handleImportFile(file) {
 
       render();
       hideLoadDialog();
+      updatePagesPanelUI();
 
       const name = data.name || 'Imported design';
       state.currentDesignName = name;
@@ -5354,48 +5949,62 @@ function handleLoad(name) {
     return;
   }
 
-  state.elements = design.elements || [];
-  state.labelSize = design.labelSize || { width: 40, height: 30 };
-  state.selectedIds = [];
+  // Migrate v3/v1/v2 → v4 format
+  let loadedData = design;
+  if (!loadedData.pages && loadedData.elements) {
+    const pageId = generatePageId();
+    loadedData = {
+      name,
+      activePageId: pageId,
+      templateData: loadedData.templateData || [],
+      pages: [{
+        id: pageId,
+        name: 'Page 1',
+        labelSize: loadedData.labelSize || { width: 40, height: 30 },
+        elements: loadedData.elements || [],
+        multiLabel: loadedData.multiLabel || { enabled: false, labelWidth: 10, labelHeight: 20, labelsAcross: 4, gapMm: 2, cloneMode: true },
+        isTemplate: loadedData.isTemplate || false,
+        templateFields: loadedData.templateFields || [],
+        locked: false,
+      }],
+    };
+  }
 
-  // Restore template data if present
-  state.templateData = design.templateData || [];
-  state.selectedRecords = state.templateData.map((_, i) => i); // Select all by default
+  project.pages = loadedData.pages.map(p => ({
+    ...p,
+    history: [],
+    historyIndex: -1,
+    locked: p.locked || false,
+    multiLabel: p.multiLabel || { enabled: false, labelWidth: 10, labelHeight: 20, labelsAcross: 4, gapMm: 2, cloneMode: true },
+    templateFields: p.templateFields || [],
+  }));
+  project.activePageId = loadedData.activePageId || project.pages[0].id;
+  project.name = name;
 
-  // Restore multi-label config if present
-  if (design.multiLabel && design.multiLabel.enabled) {
-    state.multiLabel = { ...design.multiLabel };
-    state.activeZone = 0;
+  state.templateData = loadedData.templateData || [];
+  state.selectedRecords = state.templateData.map((_, i) => i);
 
-    // Update label size dropdown to show multi-label
+  const activePage = getActivePage();
+  loadPageIntoState(activePage);
+
+  if (activePage.multiLabel?.enabled) {
+    state.multiLabel = JSON.parse(JSON.stringify(activePage.multiLabel));
     const select = $('#label-size');
     select.value = 'multi-label';
     $('#custom-size').classList.add('hidden');
-
-    // Apply multi-label dimensions
     state.renderer.setMultiLabelDimensions(
-      state.multiLabel.labelWidth,
-      state.multiLabel.labelHeight,
-      state.multiLabel.labelsAcross,
-      state.multiLabel.gapMm
+      state.multiLabel.labelWidth, state.multiLabel.labelHeight,
+      state.multiLabel.labelsAcross, state.multiLabel.gapMm
     );
-    state.renderer.setActiveZone(state.activeZone);
+    state.renderer.setActiveZone(0);
+    state.activeZone = 0;
     updateZoneToolbar();
   } else {
-    // Reset multi-label state
-    state.multiLabel = {
-      enabled: false,
-      labelWidth: 10,
-      labelHeight: 20,
-      labelsAcross: 4,
-      gapMm: 2,
-      cloneMode: true,
-    };
+    state.multiLabel = { enabled: false, labelWidth: 10, labelHeight: 20, labelsAcross: 4, gapMm: 2, cloneMode: true };
     state.activeZone = 0;
     state.renderer.disableMultiLabel();
     $('#zone-toolbar').classList.add('hidden');
 
-    // Update label size dropdown
     const sizeKey = state.labelSize.round
       ? `${state.labelSize.width}mm Round`
       : `${state.labelSize.width}x${state.labelSize.height}`;
@@ -5409,35 +6018,29 @@ function handleLoad(name) {
       $('#custom-width').value = state.labelSize.width;
       $('#custom-height').value = state.labelSize.height;
     }
-
     state.renderer.setDimensions(state.labelSize.width, state.labelSize.height, state.zoom, state.labelSize.round || false);
   }
 
   state.renderer.clearCache();
   resetHistory();
+  applyLockState();
   updatePrintSize();
   updateToolbarState();
   updatePropertiesPanel();
 
-  // Detect template fields from loaded elements
   detectTemplateFields();
 
-  // Set current design name and update mobile display
   state.currentDesignName = name;
   updateMobileLabelName();
 
   render();
-
   hideLoadDialog();
+  updatePagesPanelUI();
 
-  // Show status with template info
-  const templateInfo = state.templateData.length > 0
-    ? ` (${state.templateData.length} data records)`
-    : '';
   const multiLabelInfo = state.multiLabel.enabled
     ? ` [${state.multiLabel.labelsAcross}-up]`
     : '';
-  setStatus(`Loaded "${name}"${templateInfo}${multiLabelInfo}`);
+  setStatus(`Loaded "${name}" (${project.pages.length} page${project.pages.length !== 1 ? 's' : ''})${multiLabelInfo}`);
 }
 
 /**
@@ -7207,6 +7810,23 @@ function init() {
       });
     }
   };
+
+  // Initialize project with one page
+  const initialPageId = generatePageId();
+  const initialPage = {
+    id: initialPageId,
+    name: 'Page 1',
+    labelSize: { ...state.labelSize },
+    elements: [],
+    history: [],
+    historyIndex: -1,
+    multiLabel: JSON.parse(JSON.stringify(state.multiLabel)),
+    templateFields: [],
+    locked: false,
+  };
+  project.pages = [initialPage];
+  project.activePageId = initialPageId;
+
   updatePrintSize();
 
   // Label size
@@ -7294,6 +7914,7 @@ function init() {
   // Connect and print
   $('#connect-btn').addEventListener('click', handleConnect);
   $('#print-btn').addEventListener('click', handlePrint);
+  $('#print-all-btn')?.addEventListener('click', handlePrintAll);
 
   // Printer info popup
   const printerInfoPopup = $('#printer-info-popup');
@@ -7589,6 +8210,12 @@ function init() {
 
   $('#load-btn').addEventListener('click', showLoadDialog);
   $('#load-cancel').addEventListener('click', hideLoadDialog);
+
+  // Pages panel
+  $('#add-page-btn')?.addEventListener('click', addPage);
+  document.getElementById('page-lock-banner-btn')?.addEventListener('click', () => {
+    togglePageLock(project.activePageId);
+  });
 
   // Import from file
   $('#import-file-btn').addEventListener('click', () => $('#import-file-input').click());
@@ -8269,6 +8896,9 @@ function init() {
   });
   $('#full-preview-print').addEventListener('click', handlePrintSinglePreview);
 
+  // Initialize pages panel UI
+  updatePagesPanelUI();
+
   // Initial render
   render();
 
@@ -8297,6 +8927,10 @@ function init() {
       state.transport.disconnect();
     }
   });
+
+  // Expose for testing / debugging
+  window.project = project;
+  window.state = state;
 
   console.log('Phomymo Label Designer initialized');
 }

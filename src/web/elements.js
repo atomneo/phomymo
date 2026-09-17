@@ -349,7 +349,7 @@ export function cloneElement(element) {
 /**
  * Generate unique group ID
  */
-function generateGroupId() {
+export function generateGroupId() {
   return 'grp_' + Date.now().toString(36) + Math.random().toString(36).substr(2, 9);
 }
 

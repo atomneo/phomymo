@@ -384,6 +384,10 @@
     #mobile-menu-panel.menu-open {
       transform: translateX(0) !important;
     }
+    .page-tile.drag-over {
+      outline: 2px solid #3b82f6;
+      outline-offset: -2px;
+    }
   </style>
 </head>
 <body class="bg-gray-100 h-screen flex flex-col overflow-hidden">
@@ -521,6 +525,7 @@
           <button id="print-settings-btn" class="p-1.5 sm:p-2 bg-gray-100 hover:bg-gray-200 text-gray-700 transition-colors" title="Print Settings">
             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
           </button>
+          <button id="print-all-btn" class="hidden sm:block px-2 sm:px-3 py-1.5 sm:py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 text-xs sm:text-sm font-medium transition-colors" title="Print All Pages">Print All</button>
           <button id="print-btn" class="px-3 sm:px-5 py-1.5 sm:py-2 bg-gray-900 hover:bg-gray-800 text-white text-xs sm:text-sm font-medium rounded-r-lg transition-colors">
             Print
           </button>
@@ -725,10 +730,27 @@
 
   <!-- Main Content -->
   <main class="flex-1 flex overflow-hidden relative">
+    <!-- Pages Panel -->
+    <aside id="pages-panel" class="w-36 flex-none bg-gray-50 border-r border-gray-200 flex flex-col overflow-hidden">
+      <div class="px-2 py-2 text-xs font-semibold text-gray-500 uppercase tracking-wide border-b border-gray-200 flex items-center justify-between">
+        <span>Pages</span>
+      </div>
+      <div id="pages-list" class="flex-1 overflow-y-auto py-1"></div>
+      <div class="p-2 border-t border-gray-200">
+        <button id="add-page-btn" class="w-full text-xs text-center py-1.5 rounded border border-dashed border-gray-300 hover:border-blue-400 hover:text-blue-600 text-gray-500 transition-colors">+ Add page</button>
+      </div>
+    </aside>
+
     <!-- Canvas Area -->
     <div class="flex-1 flex items-center justify-center p-3 sm:p-6 overflow-auto relative">
-      <div id="canvas-container" class="rounded-lg shadow-inner transition-transform origin-center" style="touch-action: none;">
+      <div id="canvas-container" class="rounded-lg shadow-inner transition-transform origin-center relative" style="touch-action: none;">
         <canvas id="preview-canvas" class="cursor-crosshair rounded-lg" style="touch-action: none; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none;"></canvas>
+        <!-- Page Lock Banner -->
+        <div id="page-lock-banner" class="hidden absolute inset-0 flex items-start justify-center pt-2 pointer-events-none z-30">
+          <div class="bg-yellow-50 border border-yellow-300 text-yellow-800 text-xs rounded-lg px-3 py-1.5 shadow-sm pointer-events-auto cursor-pointer" id="page-lock-banner-btn" title="Click to unlock">
+            &#128274; Page locked &#8212; click to unlock
+          </div>
+        </div>
       </div>
 
       <!-- Inline Text Editor Overlay -->

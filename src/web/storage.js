@@ -73,18 +73,37 @@ export function loadDesign(name) {
 export function listDesigns() {
   const designs = getAllDesigns();
   return Object.entries(designs)
-    .map(([name, design]) => ({
-      name,
-      savedAt: design.savedAt,
-      labelSize: design.labelSize,
-      elementCount: design.elements?.length || 0,
-      isTemplate: design.isTemplate || false,
-      templateFieldCount: design.templateFields?.length || 0,
-      templateDataCount: design.templateData?.length || 0,
-      hasImages: design.elements?.some(el => el.type === 'image') || false,
-      isMultiLabel: design.multiLabel?.enabled || false,
-      multiLabel: design.multiLabel || null,
-    }))
+    .map(([name, design]) => {
+      if (design.pages && Array.isArray(design.pages)) {
+        const activePage = design.pages.find(p => p.id === design.activePageId) || design.pages[0];
+        return {
+          name,
+          savedAt: design.savedAt,
+          labelSize: activePage?.labelSize || { width: 40, height: 30 },
+          elementCount: design.pages.reduce((sum, p) => sum + (p.elements?.length || 0), 0),
+          isTemplate: design.pages.some(p => p.isTemplate),
+          templateFieldCount: design.pages.reduce((sum, p) => sum + (p.templateFields?.length || 0), 0),
+          templateDataCount: design.templateData?.length || 0,
+          hasImages: design.pages.some(p => p.elements?.some(el => el.type === 'image')),
+          isMultiLabel: design.pages.some(p => p.multiLabel?.enabled),
+          multiLabel: activePage?.multiLabel || null,
+          pageCount: design.pages.length,
+        };
+      }
+      return {
+        name,
+        savedAt: design.savedAt,
+        labelSize: design.labelSize,
+        elementCount: design.elements?.length || 0,
+        isTemplate: design.isTemplate || false,
+        templateFieldCount: design.templateFields?.length || 0,
+        templateDataCount: design.templateData?.length || 0,
+        hasImages: design.elements?.some(el => el.type === 'image') || false,
+        isMultiLabel: design.multiLabel?.enabled || false,
+        multiLabel: design.multiLabel || null,
+        pageCount: 1,
+      };
+    })
     .sort((a, b) => b.savedAt - a.savedAt); // Most recent first
 }
 
@@ -149,9 +168,20 @@ export function exportDesign(name) {
     throw new Error('Design not found');
   }
 
+  if (design.pages) {
+    return JSON.stringify({
+      name,
+      version: 4,
+      exportedAt: new Date().toISOString(),
+      activePageId: design.activePageId,
+      pages: design.pages,
+      ...(design.templateData ? { templateData: design.templateData } : {}),
+    }, null, 2);
+  }
+
   return JSON.stringify({
     name,
-    version: 3, // Version 3 includes multi-label support
+    version: 3,
     ...design,
   }, null, 2);
 }
@@ -166,6 +196,26 @@ export function importDesign(jsonString, overrideName = null) {
   try {
     const data = JSON.parse(jsonString);
 
+    // Handle v4 multi-page format
+    if (data.pages && Array.isArray(data.pages)) {
+      const name = overrideName || data.name || `Imported ${new Date().toLocaleString()}`;
+      const designData = {
+        pages: data.pages,
+        activePageId: data.activePageId || data.pages[0]?.id,
+      };
+      if (data.templateData && Array.isArray(data.templateData)) {
+        designData.templateData = data.templateData;
+      }
+      saveDesign(name, designData);
+      return {
+        name,
+        hasTemplateData: (data.templateData?.length || 0) > 0,
+        templateDataCount: data.templateData?.length || 0,
+        hasMultiLabel: data.pages.some(p => p.multiLabel?.enabled),
+      };
+    }
+
+    // Legacy v3/v2/v1 format
     if (!data.elements || !Array.isArray(data.elements)) {
       throw new Error('Invalid design format: missing elements');
     }
