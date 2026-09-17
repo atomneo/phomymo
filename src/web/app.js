@@ -7,7 +7,7 @@
 import { CanvasRenderer } from './canvas.js?v=115';
 import { BLETransport } from './ble.js?v=103';
 import { USBTransport } from './usb.js?v=101';
-import { print, printDensityTest, isDSeriesPrinter, isP12Printer, isA30Printer, isTapePrinter, isPM241Printer, isTSPLPrinter, isRotatedPrinter, getPrinterWidthBytes, getPrinterDpi, getPrinterAlignment, getPrinterDescription, isDeviceRecognized, getMatchedPattern, loadPrinterDefinitions, getAllPrinterDefinitions, getPrinterDefinition, getCustomPrinterDefinitions, saveCustomPrinterDefinition, deleteCustomPrinterDefinition, isBuiltinPrinter, resetBuiltinPrinter, getAvailableProtocols, getAvailableLabelPresets, getDetectedDefinition } from './printer.js?v=128';
+import { print, printDensityTest, isDSeriesPrinter, isP12Printer, isA30Printer, isTapePrinter, isPM241Printer, isTSPLPrinter, isRotatedPrinter, getPrinterWidthBytes, getPrinterDpi, getPrinterAlignment, normalizeHorizontalOffset, normalizeVerticalOffset, getPrinterDescription, isDeviceRecognized, getMatchedPattern, loadPrinterDefinitions, getAllPrinterDefinitions, getPrinterDefinition, getCustomPrinterDefinitions, saveCustomPrinterDefinition, deleteCustomPrinterDefinition, isBuiltinPrinter, resetBuiltinPrinter, getAvailableProtocols, getAvailableLabelPresets, getDetectedDefinition } from './printer.js?v=130';
 import {
   createTextElement,
   createImageElement,
@@ -7068,6 +7068,8 @@ function initPrinterDefsManager() {
     $('#pdef-width').value = def?.widthBytes ?? '';
     widthInput.dispatchEvent(new Event('input')); // Update info text
     $('#pdef-alignment').value = def?.alignment || 'center';
+    $('#pdef-hoffset').value = normalizeHorizontalOffset(def?.horizontalOffset);
+    $('#pdef-voffset').value = normalizeVerticalOffset(def?.verticalOffset);
     $('#pdef-rotated').value = def?.rotated ? 'true' : 'false';
     labelPresetsSelect.value = def?.labelPresets || 'm-series';
     tapeSelect.value = def?.tape ? 'true' : 'false';
@@ -7112,6 +7114,8 @@ function initPrinterDefsManager() {
       widthBytes: widthVal === '' ? null : parseInt(widthVal),
       dpi: parseInt($('#pdef-dpi').value),
       alignment: $('#pdef-alignment').value,
+      horizontalOffset: normalizeHorizontalOffset($('#pdef-hoffset').value),
+      verticalOffset: normalizeVerticalOffset($('#pdef-voffset').value),
       rotated: $('#pdef-rotated').value === 'true',
       tape: tapeSelect.value === 'true',
       tapeWidths: tapeSelect.value === 'true' ? tapeWidths : null,

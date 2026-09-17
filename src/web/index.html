@@ -1484,6 +1484,19 @@
 
           <div class="grid grid-cols-2 gap-3">
             <div>
+              <label class="block text-xs font-medium text-gray-600 mb-1">Horizontal Offset (px)</label>
+              <input type="number" id="pdef-hoffset" class="prop-input" min="-64" max="64" step="1" placeholder="0" />
+              <div class="text-xs text-gray-400 mt-0.5">Positive = right, negative = left. Print calibration only.</div>
+            </div>
+            <div>
+              <label class="block text-xs font-medium text-gray-600 mb-1">Vertical Offset (px)</label>
+              <input type="number" id="pdef-voffset" class="prop-input" min="-64" max="64" step="1" placeholder="0" />
+              <div class="text-xs text-gray-400 mt-0.5">Positive = down, negative = up. Print calibration only.</div>
+            </div>
+          </div>
+
+          <div class="grid grid-cols-2 gap-3">
+            <div>
               <label class="block text-xs font-medium text-gray-600 mb-1">Rotated Print</label>
               <select id="pdef-rotated" class="prop-input">
                 <option value="false">No</option>
@@ -2299,7 +2312,7 @@
     pdfjsModule.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.0.379/pdf.worker.min.mjs';
     window.pdfjsLib = pdfjsModule;
   </script>
-  <script type="module" src="app.js?v=153"></script>
+  <script type="module" src="app.js?v=155"></script>
   <script>
     // Show body once styles are ready
     requestAnimationFrame(() => {

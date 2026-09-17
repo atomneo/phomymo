@@ -251,6 +251,8 @@ Fill in the fields:
 - **Width (bytes)** - Print head width (each byte = 8 pixels = ~1mm at 203 DPI)
 - **DPI** - 203 (standard) or 300 (high-res)
 - **Alignment** - How the label is positioned on the print head
+- **Horizontal Offset (px)** - Print calibration: shifts the final raster right (+) or left (-) by whole pixels (~8 px = 1 mm at 203 DPI) to correct a printer that's physically misaligned. Does not change print width, DPI, or the canvas - it's applied after alignment, directly to the printer output.
+- **Vertical Offset (px)** - Print calibration: shifts the final raster down (+) or up (-) by whole pixels/lines (~8 px = 1 mm at 203 DPI) to correct content that starts printing too early or too late in the feed direction. Same rules as Horizontal Offset - applied directly to the printer output, doesn't change label height or the canvas.
 - **Auto-detect Patterns** - BLE device name prefixes for automatic recognition
 
 ![Filled form](screenshots/06-custom-printers/03-new-printer-filled.png)
